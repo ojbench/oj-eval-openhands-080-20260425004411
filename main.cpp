@@ -1,43 +1,97 @@
 
 #include <iostream>
 #include <vector>
-#include <queue>
+#include <stack>
+#include <algorithm>
 using namespace std;
 
-// Function to check if a component is bipartite and return its size
-// Returns pair of (is_bipartite, component_size)
-pair<bool, int> isBipartite(const vector<vector<int>>& graph, vector<bool>& visited, int start) {
-    queue<int> q;
-    q.push(start);
-    visited[start] = true;
+// Global variables for DFS
+vector<int> disc;           // Discovery time of vertices
+vector<int> low;            // Low value of vertices
+vector<bool> visited;       // To track visited vertices
+vector<vector<int>> graph;  // Graph adjacency list
+stack<pair<int, int>> st;   // Stack to store edges
+
+// Function to perform DFS and find biconnected components
+void dfs(int u, int parent, vector<vector<int>>& components) {
+    static int time = 0;
+    disc[u] = low[u] = ++time;
+    visited[u] = true;
     
-    // Color array: -1 = uncolored, 0 = color 0, 1 = color 1
-    vector<int> color(graph.size(), -1);
-    color[start] = 0;
+    int children = 0;
     
-    int componentSize = 1;
-    bool isBipartite = true;
+    for (int v : graph[u]) {
+        if (!visited[v]) {
+            children++;
+            st.push({u, v});
+            
+            dfs(v, u, components);
+            
+            low[u] = min(low[u], low[v]);
+            
+            // If u is an articulation point or root with more than one child
+            if ((parent == -1 && children > 1) || (parent != -1 && low[v] >= disc[u])) {
+                // Found a biconnected component
+                vector<int> component;
+                while (st.top() != make_pair(u, v)) {
+                    auto edge = st.top();
+                    st.pop();
+                    component.push_back(edge.first);
+                    component.push_back(edge.second);
+                }
+                auto edge = st.top();
+                st.pop();
+                component.push_back(edge.first);
+                component.push_back(edge.second);
+                
+                // Remove duplicates and sort
+                sort(component.begin(), component.end());
+                component.erase(unique(component.begin(), component.end()), component.end());
+                components.push_back(component);
+            }
+        } else if (v != parent && disc[v] < disc[u]) {
+            // Back edge
+            low[u] = min(low[u], disc[v]);
+            st.push({u, v});
+        }
+    }
+}
+
+// Function to check if a component is bipartite
+bool isBipartite(const vector<int>& component, const vector<vector<int>>& graph) {
+    // Create a subgraph with only the vertices in the component
+    vector<int> color(100001, -1);  // -1: uncolored, 0: color 0, 1: color 1
+    vector<bool> inComponent(100001, false);
     
-    while (!q.empty() && isBipartite) {
-        int u = q.front();
-        q.pop();
-        
-        for (int v : graph[u]) {
-            if (!visited[v]) {
-                visited[v] = true;
-                color[v] = color[u] ^ 1;
-                q.push(v);
-                componentSize++;
-            } else {
-                // Check if coloring is consistent
-                if (color[v] == color[u]) {
-                    isBipartite = false;
+    for (int v : component) {
+        inComponent[v] = true;
+    }
+    
+    for (int v : component) {
+        if (color[v] == -1) {
+            color[v] = 0;
+            stack<int> s;
+            s.push(v);
+            
+            while (!s.empty()) {
+                int u = s.top();
+                s.pop();
+                
+                for (int w : graph[u]) {
+                    if (inComponent[w]) {
+                        if (color[w] == -1) {
+                            color[w] = color[u] ^ 1;
+                            s.push(w);
+                        } else if (color[w] == color[u]) {
+                            return false;  // Not bipartite
+                        }
+                    }
                 }
             }
         }
     }
     
-    return {isBipartite, componentSize};
+    return true;  // Bipartite
 }
 
 int main() {
@@ -47,10 +101,13 @@ int main() {
     int n, m;
     cin >> n >> m;
     
-    // Create adjacency list for the graph
-    // Graph has n+1 vertices (1-indexed)
-    vector<vector<int>> graph(n + 1);
+    // Resize global vectors
+    disc.resize(n + 1);
+    low.resize(n + 1);
+    visited.resize(n + 1, false);
+    graph.resize(n + 1);
     
+    // Create adjacency list for the graph
     for (int i = 0; i < m; i++) {
         int x, y;
         cin >> x >> y;
@@ -58,20 +115,51 @@ int main() {
         graph[y].push_back(x);
     }
     
-    vector<bool> visited(n + 1, false);
-    int totalBipartiteVertices = 0;
+    vector<vector<int>> components;
     
-    // Check each connected component
+    // Find biconnected components
     for (int i = 1; i <= n; i++) {
         if (!visited[i]) {
-            auto [isBipartiteComp, compSize] = isBipartite(graph, visited, i);
-            if (isBipartiteComp) {
-                totalBipartiteVertices += compSize;
+            dfs(i, -1, components);
+        }
+    }
+    
+    // Add remaining edges in the stack
+    if (!st.empty()) {
+        vector<int> component;
+        while (!st.empty()) {
+            auto edge = st.top();
+            st.pop();
+            component.push_back(edge.first);
+            component.push_back(edge.second);
+        }
+        
+        // Remove duplicates and sort
+        sort(component.begin(), component.end());
+        component.erase(unique(component.begin(), component.end()), component.end());
+        components.push_back(component);
+    }
+    
+    // Mark vertices that are in non-bipartite biconnected components
+    vector<bool> inOddCycle(n + 1, false);
+    
+    for (const auto& component : components) {
+        if (!isBipartite(component, graph)) {
+            for (int v : component) {
+                inOddCycle[v] = true;
             }
         }
     }
     
-    cout << totalBipartiteVertices << endl;
+    // Count vertices that are not in any odd cycle
+    int count = 0;
+    for (int i = 1; i <= n; i++) {
+        if (!inOddCycle[i]) {
+            count++;
+        }
+    }
+    
+    cout << count << endl;
     
     return 0;
 }
